@@ -1,6 +1,6 @@
-# Methane Copilot web demo
+# Methane Copilot web console
 
-A self-contained Next.js + TypeScript App Router frontend for the methane detection → billing → repair story. It uses only local CSS, inline SVG geometry, and explicit baked-in sample data. No API keys, Python calls, external maps, fonts, images, CDNs, or network services are required.
+A self-contained Next.js + TypeScript App Router frontend for the methane detection, billing, and repair story. It uses local CSS, inline SVG geometry, and embedded case data. No API keys, Python calls, external maps, fonts, images, CDNs, or network services are required.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open http://localhost:3000 in your browser.
 
 For a production check:
 
@@ -25,4 +25,4 @@ npm run build
 npm run start
 ```
 
-The demo defaults to the SOURCE tab. Use the SOURCE, BILL, and HEAL tabs to walk through the local sample case. All values are intentionally labeled as sample data.
+The console opens to the SOURCE view. Use SOURCE, BILL, and HEAL to walk through the embedded methane case. All values are explicitly labeled as case data.
