@@ -1,33 +1,50 @@
 "use client";
 
 import { useState } from "react";
+import styles from "./credit.module.css";
 
-type Tab = "source" | "bill" | "heal";
+type TabId = "source" | "bill" | "heal" | "credit";
+type Tab = { id: TabId; label: string; kicker: string; text: string };
 
 const CASE = {
-  name: "North separator • flange F-14",
+  name: "North separator — flange F-14",
   latitude: "28.08833° N",
   longitude: "9.78350° E",
-  methane: "12.4 t CH₄",
+  methane: "12.4 t CH4",
   commodity: "$1,934.40",
   climate: "$19,840",
-  footprint: "347.2 t CO₂e",
+  footprint: "347.2 tCO2e",
   carbon: "$26,040",
 };
 
-const tabs: Array<{ id: Tab; label: string; kicker: string; text: string }> = [
-  { id: "source", label: "SOURCE", kicker: "Detect", text: "Trace the measured plume to a named asset." },
-  { id: "bill", label: "BILL", kicker: "Account", text: "Translate a measured loss into accountable cost." },
-  { id: "heal", label: "HEAL", kicker: "Resolve", text: "Close the loop with a verified repair." },
+const tabs: readonly Tab[] = [
+  {
+    id: "source",
+    label: "SOURCE",
+    kicker: "Detect",
+    text: "Trace the measured plume to a named asset.",
+  },
+  {
+    id: "bill",
+    label: "BILL",
+    kicker: "Account",
+    text: "Translate a measured loss into accountable cost.",
+  },
+  {
+    id: "heal",
+    label: "HEAL",
+    kicker: "Resolve",
+    text: "Close the loop with a verified repair.",
+  },
+  {
+    id: "credit",
+    label: "CREDIT",
+    kicker: "Monetize",
+    text: "Model the pathway from avoided methane to a credit sale.",
+  },
 ];
 
-const timeline = [
-  ["detected", "Detected", "Plume threshold crossed", "09 Sep 2026 · 08:12 UTC"],
-  ["source_named", "Source named", CASE.name, "09 Sep 2026 · 11:36 UTC"],
-  ["billed", "Billed", `${CASE.methane} loss booked`, "10 Sep 2026 · 09:05 UTC"],
-  ["repair_scheduled", "Repair scheduled", "Field crew · work order WO-284", "11 Sep 2026 · 14:20 UTC"],
-  ["resolved", "Resolved", "Post-repair scan below threshold", "14 Sep 2026 · 16:42 UTC"],
-] as const;
+const pipeline = ["minted", "verified", "listed", "sold"] as const;
 
 function Mark() {
   return (
@@ -39,26 +56,36 @@ function Mark() {
   );
 }
 
-function Icon({ kind }: { kind: Tab }) {
+function Icon({ kind }: { kind: TabId }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      {kind === "source" ? (
-        <>
-          <circle cx="12" cy="12" r="8" />
-          <path d="M12 12 18 6M5 7a10 10 0 0 0 0 10M19 7a10 10 0 0 1 0 10" />
-        </>
-      ) : kind === "bill" ? (
-        <>
-          <path d="M6 3.5h12v17l-3-1.8-3 1.8-3-1.8-3 1.8z" />
-          <path d="M9 8h6M9 12h6M9 16h3" />
-        </>
-      ) : (
-        <>
-          <path d="M3.8 20.2 6.5 19l10.9-10.9-4-4L2.5 15.5l-.7 2.7 2 2z" />
-          <path d="m13.1 6.9 4 4M16.5 3.5l4 4" />
-        </>
-      )}
-    </svg>
+    <span className="tab-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none">
+        {kind === "source" && (
+          <>
+            <circle cx="12" cy="12" r="8" />
+            <path d="M12 12 18 6M5 7a10 10 0 0 0 0 10M19 7a10 10 0 0 1 0 10" />
+          </>
+        )}
+        {kind === "bill" && (
+          <>
+            <path d="M6 3.5h12v17l-3-1.8-3 1.8-3-1.8-3 1.8z" />
+            <path d="M9 8h6M9 12h6M9 16h3" />
+          </>
+        )}
+        {kind === "heal" && (
+          <>
+            <path d="m3.8 20.2 2.7-1.2 10.9-10.9-4-4L2.5 15.5l-.7 2.7 2 2z" />
+            <path d="m13.1 6.9 4 4M16.5 3.5l4 4" />
+          </>
+        )}
+        {kind === "credit" && (
+          <>
+            <circle cx="12" cy="12" r="8" />
+            <path d="M12 7v10M9 9h4a2 2 0 0 1 0 4H9h4a2 2 0 0 1 0 4H9" />
+          </>
+        )}
+      </svg>
+    </span>
   );
 }
 
@@ -68,77 +95,9 @@ function CaseDetails() {
       <p className="eyebrow">Plume case</p>
       <h3>{CASE.name}</h3>
       <dl>
-        <div>
-          <dt>Latitude</dt>
-          <dd>{CASE.latitude}</dd>
-        </div>
-        <div>
-          <dt>Longitude</dt>
-          <dd>{CASE.longitude}</dd>
-        </div>
+        <div><dt>Latitude</dt><dd>{CASE.latitude}</dd></div>
+        <div><dt>Longitude</dt><dd>{CASE.longitude}</dd></div>
       </dl>
-    </div>
-  );
-}
-
-function SourceMap() {
-  return (
-    <div className="map-wrap">
-      <div className="map-top">
-        <span><i className="live-dot" /> S2L SCAN · TILE 09.14.26</span>
-        <span>N ↑ · LOCAL GEOMETRY</span>
-      </div>
-      <svg className="map" viewBox="0 0 860 440" role="img" aria-labelledby="map-title map-desc">
-        <title id="map-title">Methane plume source attribution</title>
-        <desc id="map-desc">A teal plume trail leads from the monitored separator to a back-traced source, with wind direction and sensor tracks.</desc>
-        <defs>
-          <linearGradient id="plume-gradient" x1="0" x2="1">
-            <stop stopColor="#55e0c2" stopOpacity=".9" />
-            <stop offset="1" stopColor="#1d6c71" stopOpacity=".04" />
-          </linearGradient>
-          <radialGradient id="hot-gradient">
-            <stop stopColor="#ffd078" />
-            <stop offset="1" stopColor="#ed9065" stopOpacity="0" />
-          </radialGradient>
-          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-            <path d="M0 0 10 5 0 10Z" fill="#88f5d7" />
-          </marker>
-        </defs>
-        <rect width="860" height="440" rx="18" fill="#0b1a1c" />
-        <g className="grid">
-          <path d="M40 80h780M40 160h780M40 240h780M40 320h780M140 32v376M280 32v376M420 32v376M560 32v376M700 32v376" />
-        </g>
-        <path className="contour" d="M52 110c104-42 166 28 271-4s174-9 262 22 167-28 245-4M55 342c108-48 202 22 292-17s154-28 238 8 159 5 220-14" />
-        <path className="road" d="M70 380c135-39 188-99 279-92s157 63 243 40 131-76 225-91" />
-        <path className="plume" d="M184 282c70-44 102-102 182-127 77-24 131-4 208-31 87-30 153-65 242-65-50 41-98 86-153 116-71 39-125 28-205 60-82 33-153 99-274 122Z" fill="url(#plume-gradient)" />
-        <path className="edge" d="M204 275c70-37 109-89 174-111 82-28 130-3 208-29 65-22 132-57 202-65" />
-        <path className="candidate" d="M184 291c79-43 119-77 191-104 84-31 131-26 213-52" markerEnd="url(#arrow)" />
-        <circle className="hotspot" cx="184" cy="291" r="44" fill="url(#hot-gradient)" />
-        <g className="marker">
-          <circle className="pulse" cx="184" cy="291" r="24" />
-          <circle cx="184" cy="291" r="9" />
-          <path d="M184 301v20" />
-        </g>
-        <g className="sensors">
-          <circle cx="306" cy="202" r="6" />
-          <circle cx="420" cy="164" r="6" />
-          <circle cx="548" cy="132" r="6" />
-          <circle cx="680" cy="88" r="6" />
-        </g>
-        <line className="wind" x1="685" y1="350" x2="760" y2="350" markerEnd="url(#arrow)" />
-        <text className="svg-label bright" x="687" y="329">WIND 3.8 m/s</text>
-        <text className="svg-label" x="687" y="373">NW · 312°</text>
-        <text className="svg-label bright" x="93" y="350">MONITORED SOURCE</text>
-        <text className="svg-label" x="93" y="371">NORTH SEPARATOR / FLANGE F-14</text>
-        <text className="svg-label" x="51" y="55">TILE 28.08833° N / 9.78350° E</text>
-        <text className="svg-label" x="714" y="405">200 m</text>
-        <path className="scale" d="M714 388h96M714 388v8M810 388v8" />
-      </svg>
-      <div className="legend">
-        <span><i className="lp" /> methane concentration</span>
-        <span><i className="ls" /> back-traced source</span>
-        <span><i className="ln" /> sensor track</span>
-      </div>
     </div>
   );
 }
@@ -148,14 +107,25 @@ function Source() {
     <section className="module" aria-labelledby="source-title">
       <div className="section-head">
         <div>
-          <p className="eyebrow">Observation · 14 Sep 2026</p>
+          <p className="eyebrow">Observation — 14 Sep 2026</p>
           <h2 id="source-title">Back-trace the plume.</h2>
           <p className="lede">A detection becomes useful when its signal resolves to an accountable piece of equipment.</p>
         </div>
         <span className="status"><i className="live-dot" /> LIVE CASE</span>
       </div>
       <div className="source-grid">
-        <div className="panel map-panel"><SourceMap /></div>
+        <div className="panel source-card">
+          <div className="source-map-label"><span><i className="live-dot" /> S2L SCAN — TILE 09.14.26</span><span>N 28.08833° · LOCAL GEOMETRY</span></div>
+          <div className="source-visual" role="img" aria-label="Local methane plume source geometry">
+            <span className="source-grid-lines" />
+            <span className="source-plume" />
+            <span className="source-hotspot" />
+            <span className="source-marker">●<small>F-14</small></span>
+            <span className="source-wind">WIND 3.8 m/s →</span>
+            <span className="source-coordinate">MONITORED SOURCE<br />NORTH SEPARATOR / FLANGE F-14</span>
+          </div>
+          <div className="legend"><span><i className="legend-methane" /> methane concentration</span><span><i className="legend-source" /> back-traced source</span><span><i className="legend-sensor" /> sensor track</span></div>
+        </div>
         <aside className="source-aside">
           <div className="panel confidence">
             <div className="label-row"><span>Attribution result</span><b>HIGH</b></div>
@@ -165,12 +135,7 @@ function Source() {
             <div className="split"><span><b>3.8 m/s</b> wind</span><span><b>NW 312°</b> direction</span></div>
           </div>
           <CaseDetails />
-          <div className="panel detected">
-            <span>Measured methane</span>
-            <b>{CASE.methane}</b>
-            <small>release per scan</small>
-            <div className="spark" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-          </div>
+          <div className="panel detected"><span>Measured methane</span><b>{CASE.methane}</b><small>release per scan</small><div className="spark" aria-hidden="true"><i /><i /><i /><i /><i /></div></div>
         </aside>
       </div>
     </section>
@@ -190,38 +155,14 @@ function Bill() {
       <div className="bill-grid">
         <div className="bill-main">
           <CaseDetails />
-          <div className="total">
-            <span>FINANCIAL EXPOSURE</span>
-            <b>$21,774.40</b>
-            <small>commodity + EPA climate damage</small>
-          </div>
+          <div className="total"><span>FINANCIAL EXPOSURE</span><b>$21,774.40</b><small>commodity + EPA climate damage</small></div>
           <div className="panel ledger">
             <div className="label-row"><span>Impact ledger</span><em>CASE DATA</em></div>
-            <div className="impact-group">
-              <div className="group-label"><span>Financial loss · USD</span><span>{CASE.commodity} + {CASE.climate}</span></div>
-              <div className="impact"><div><span>Lost-gas commodity</span><b>{CASE.commodity}</b></div><i className="commodity" /><small>at $3 / MMBtu</small></div>
-              <div className="impact"><div><span>EPA climate damage</span><b>{CASE.climate}</b></div><i className="damage" /><small>2020 USD screening value</small></div>
-            </div>
-            <div className="impact-group footprint">
-              <div className="group-label"><span>Physical footprint · tCO₂e</span><span>separate unit</span></div>
-              <div className="impact"><div><span>Climate footprint</span><b>{CASE.footprint}</b></div><i /><small>GWP100 = 28 methane conversion</small></div>
-              <div className="demo-value"><span>Carbon-price equivalent</span><b>{CASE.carbon}</b><small>at $75 / tCO₂e · not added to USD loss bars</small></div>
-            </div>
+            <div className="impact-group"><div className="group-label"><span>Financial loss — USD</span><span>{CASE.commodity} + $19,840</span></div><div className="impact"><div><span>Lost-gas commodity</span><b>{CASE.commodity}</b></div><i className="commodity" /><small>at $3 / MMBtu</small></div><div className="impact"><div><span>EPA climate damage</span><b>$19,840</b></div><i className="damage" /><small>2020 USD screening value</small></div></div>
+            <div className="impact-group footprint"><div className="group-label"><span>Physical footprint — tCO2e</span><span>separate unit</span></div><div className="impact"><div><span>Climate footprint</span><b>{CASE.footprint}</b></div><i /><small>GWP100 = 28 methane conversion</small></div><div className="demo-value"><span>Carbon-price equivalent</span><b>{CASE.carbon}</b><small>at $75 / tCO2e — not added to USD loss bars</small></div></div>
           </div>
         </div>
-        <aside className="bill-side">
-          <div className="panel formula">
-            <div className="label-row"><span>Transparent math</span><b>Σ</b></div>
-            <h3>One scan, four views.</h3>
-            <div className="formula-list">
-              <div><span>Lost gas</span><code>12.4 t × 52 MMBtu/t × $3</code><b>{CASE.commodity}</b></div>
-              <div><span>EPA climate damage</span><code>12.4 t × $1,600 / t CH₄</code><b>{CASE.climate}</b></div>
-              <div><span>CO₂e</span><code>12.4 t × GWP 28</code><b>{CASE.footprint}</b></div>
-              <div><span>Carbon-price value</span><code>347.2 t CO₂e × $75 / tCO₂e</code><b>{CASE.carbon}</b></div>
-            </div>
-          </div>
-          <div className="conventions"><b>Source conventions</b><span><b>52 MMBtu / metric ton CH₄</b> · conversion</span><span><b>$3 / MMBtu</b> · Henry Hub</span><span><b>$1,600 / metric ton CH₄</b> · EPA 2023</span><span><b>$75 / tCO₂e</b> · carbon price</span></div>
-        </aside>
+        <aside className="panel formula"><div className="label-row"><span>Transparent math</span><b>∑</b></div><h3>One scan, four views.</h3><div className="formula-list"><div><span>Lost gas</span><code>12.4 t CH4 × 52 MMBtu/t × $3</code><b>{CASE.commodity}</b></div><div><span>EPA climate damage</span><code>12.4 t CH4 × $1,600 / t CH4</code><b>$19,840</b></div><div><span>CO2e</span><code>12.4 t CH4 × GWP 28</code><b>{CASE.footprint}</b></div><div><span>Carbon-price value</span><code>347.2 tCO2e × $75 / tCO2e</code><b>{CASE.carbon}</b></div></div><div className="conventions"><b>Source conventions</b><span><b>52 MMBtu / metric ton CH4</b> — conversion</span><span><b>$3 / MMBtu</b> — Henry Hub</span><span><b>$1,600 / metric ton CH4</b> — EPA 2023</span><span><b>$75 / tCO2e</b> — carbon price</span></div></aside>
       </div>
     </section>
   );
@@ -239,16 +180,46 @@ function Heal() {
         <div className="resolved"><b>✓</b><span>RESOLVED<small>verified 14 Sep 2026</small></span></div>
       </div>
       <div className="heal-grid">
-        <div className="panel timeline-panel">
-          <div className="label-row"><div><p className="eyebrow">Case MTH-0247</p><h3>{CASE.name}</h3></div><em>CASE TIMELINE</em></div>
-          <div className="timeline">{timeline.map(([stage, label, detail, time]) => <div className={`event ${stage}`} key={stage}><i>{stage === "resolved" ? "✓" : ""}</i><div><b>{label}</b><time>{time}</time><p>{detail}</p></div></div>)}</div>
+        <div className="panel timeline-panel"><div className="label-row"><div><p className="eyebrow">Case MTH-0247</p><h3>{CASE.name}</h3></div><em>CASE TIMELINE</em></div><div className="timeline"><div className="event resolved-event"><i>✓</i><div><b>Resolved</b><time>14 Sep 2026</time><p>Post-repair scan below threshold</p></div></div><div className="event"><i /><div><b>Repair scheduled</b><time>11 Sep 2026 · 14:20 UTC</time><p>Field crew — work order WO-2847</p></div></div><div className="event"><i /><div><b>Billed</b><time>10 Sep 2026 · 09:05 UTC</time><p>{CASE.methane} loss booked</p></div></div><div className="event"><i /><div><b>Source named</b><time>09 Sep 2026 · 11:36 UTC</time><p>{CASE.name}</p></div></div></div></div>
+        <aside className="heal-side"><div className="panel playbook"><div className="label-row"><div><p className="eyebrow">Repair playbook</p><h3>Make field action obvious.</h3></div><b className="play-icon">↗</b></div><div className="repair"><div><span>F-14</span><section><p className="eyebrow">Observed pattern</p><h4>Flange leak</h4><p>Likely gasket compression loss at the north separator outlet.</p></section></div><b>↻</b><div className="fix"><span>FIX</span><section><p className="eyebrow">Recommended action</p><h4>Torque and reseal</h4><p>Isolate line, torque fasteners, replace gasket, then rescan.</p></section></div></div></div><div className="panel economics"><p className="eyebrow">Repair economics</p><h3>Fix it before the next shift.</h3><div className="econ-row"><span>Estimated fix cost</span><b>$2,400</b></div><div className="econ-row"><span>Current daily burn</span><b>$161.20 <small>/ day</small></b></div><div className="cost-bars"><div><span>REPAIR</span><i /></div><div><span>BURN — 12 DAYS</span><i /></div></div><div className="payback"><span>Payback on repair</span><b>14.9 days</b><small>based on {CASE.commodity} commodity loss spread across a 12-day observation window</small></div></div></aside>
+      </div>
+    </section>
+  );
+}
+
+function Credit() {
+  return (
+    <section className={styles.creditPanel} aria-labelledby="credit-title">
+      <div className={styles.creditHeader}>
+        <div>
+          <p className={styles.kicker}>Case credit pathway</p>
+          <h2 id="credit-title">Turn measured methane into a modeled credit.</h2>
+          <p className={styles.lead}>A transparent view of the North separator case, from {CASE.methane} avoided to a modeled sale. No registry transaction is performed here.</p>
         </div>
-        <aside className="heal-side">
-          <div className="panel playbook">
-            <div className="label-row"><div><p className="eyebrow">Repair playbook</p><h3>Make field action obvious.</h3></div><b className="play-icon">↗</b></div>
-            <div className="repair"><div><span>F-14</span><section><p className="eyebrow">Observed pattern</p><h4>Flange leak</h4><p>Likely gasket compression loss at the north separator outlet.</p></section></div><b>→</b><div className="fix"><span>FIX</span><section><p className="eyebrow">Recommended action</p><h4>Torque and reseal</h4><p>Isolate line, torque fasteners, replace gasket, then rescan.</p></section></div></div>
+        <span className={styles.badge}><i /> OFFLINE MODEL</span>
+      </div>
+      <div className={styles.statGrid}>
+        <div className={styles.statCard}><span>Measured methane</span><strong>12.4 t CH4</strong><small>canonical case loss</small></div>
+        <div className={styles.statCard}><span>Climate equivalent</span><strong>347.2 tCO2e</strong><small>12.4 t CH4 × GWP 28</small></div>
+        <div className={styles.statCard}><span>Credit display</span><strong>347 credits</strong><small>whole-credit display</small></div>
+      </div>
+      <div className={styles.creditColumns}>
+        <div className={styles.creditMain}>
+          <div className={styles.card}>
+            <div className={styles.cardHeading}><div><p className={styles.kicker}>Registry pathway</p><h3>From signal to settlement.</h3></div><span>CASE MTH-0247</span></div>
+            <div className={styles.pipeline} aria-label="Credit pipeline: minted, verified, listed, sold">
+              {pipeline.map((step, index) => <div className={styles.pipelineItem} key={step}><div className={styles.pipelineNode}>{index + 1}</div><b>{step}</b>{index < pipeline.length - 1 && <span className={styles.pipelineArrow} aria-hidden="true">→</span>}</div>)}
+            </div>
+            <p className={styles.note}><b>Registry verification required (Verra/Gold Standard).</b> Modeled economics, not legal issuance.</p>
           </div>
-          <div className="panel economics"><p className="eyebrow">Repair economics</p><h3>Fix it before the next shift.</h3><div className="econ-row"><span>Estimated fix cost</span><b>$2,400</b></div><div className="econ-row"><span>Current daily burn</span><b>$161.20 <small>/ day</small></b></div><div className="cost-bars"><div><span>REPAIR</span><i style={{ width: "18%" }} /></div><div><span>BURN · 12 DAYS</span><i /></div></div><div className="payback"><span>Payback on repair</span><b>14.9 days</b><small>based on {CASE.commodity} commodity loss spread across a 12-day observation window</small></div></div>
+          <div className={styles.card}>
+            <div className={styles.cardHeading}><div><p className={styles.kicker}>Modeled settlement</p><h3>Transparent economics.</h3></div><span>$15 / tCO2e</span></div>
+            <div className={styles.mathRows}><div><span>Modeled climate basis</span><b>347.2 tCO2e × $15</b><strong>$5,208.00</strong></div><div><span>Commission</span><b>15% of estimated revenue</b><strong>−$781.20</strong></div><div className={styles.netRow}><span>Facility net</span><b>estimated revenue less commission</b><strong>$4,426.80</strong></div></div>
+          </div>
+        </div>
+        <aside className={styles.creditAside}>
+          <div className={styles.card}><p className={styles.kicker}>Display convention</p><h3>Keep the case consistent.</h3><p className={styles.body}>347 credits is the whole-credit display of 347.2 tCO2e. The revenue model uses the full 347.2 tCO2e at $15/tCO2e, producing estimated revenue of $5,208.00.</p><div className={styles.caseLine}><span>Case</span><b>{CASE.name}</b></div><div className={styles.caseLine}><span>Basis</span><b>{CASE.methane} → {CASE.footprint}</b></div></div>
+          <div className={styles.warning}><span>!</span><p>Credits remain modeled until an approved registry verifies the project and issues units. This screen does not represent legal issuance.</p></div>
         </aside>
       </div>
     </section>
@@ -256,32 +227,17 @@ function Heal() {
 }
 
 export default function Home() {
-  const [active, setActive] = useState<Tab>("source");
+  const [active, setActive] = useState<TabId>("source");
   const current = tabs.find((tab) => tab.id === active) ?? tabs[0];
 
   return (
     <main className="shell">
-      <header className="topbar">
-        <a className="brand" href="#top"><Mark /><span>METHANE <b>COPILOT</b></span></a>
-        <div className="top-right"><span className="system"><i className="live-dot" /> MARS-S2L v1 · live scan</span><span>LOCAL MODE <em /> NO API KEYS</span></div>
-      </header>
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow">Operational methane intelligence</p>
-          <h1>We don&apos;t just find methane leaks. <em>We watch until they&apos;re fixed.</em></h1>
-          <p className="hero-lede">A field-ready operating story for turning an invisible loss into a named source, a defensible bill, and a verified repair.</p>
-          <div className="loop"><b>DETECT</b><i>→</i><span>BILL</span><i>→</i><span>HEAL</span><i>→</i></div>
-        </div>
-        <div className="orbit" aria-hidden="true"><div /><div /><strong><Mark /> CH₄<small>signal</small><small>action</small><small>proof</small></strong></div>
-      </section>
-      <nav className="tabs" aria-label="Case views" role="tablist">
-        {tabs.map((tab, index) => <button key={tab.id} role="tab" aria-selected={active === tab.id} aria-controls={`${tab.id}-panel`} className={active === tab.id ? "selected" : ""} onClick={() => setActive(tab.id)}><small>0{index + 1}</small><span className="tab-icon"><Icon kind={tab.id} /></span><span><b>{tab.label}</b><em>{tab.text}</em></span><i>›</i></button>)}
-      </nav>
-      <div className="content-heading"><div><p className="eyebrow">{current.kicker} · 0{tabs.findIndex((tab) => tab.id === active) + 1}</p><h2>{current.text}</h2></div><p>All visuals are local geometry<br />and embedded case data.</p></div>
-      <div id="source-panel" role="tabpanel" hidden={active !== "source"}>{active === "source" && <Source />}</div>
-      <div id="bill-panel" role="tabpanel" hidden={active !== "bill"}>{active === "bill" && <Bill />}</div>
-      <div id="heal-panel" role="tabpanel" hidden={active !== "heal"}>{active === "heal" && <Heal />}</div>
-      <footer><span><Mark /> Methane Copilot</span><span>DETECT · BILL · HEAL</span><span>Local mode · v1.0</span></footer>
+      <header className="topbar"><a className="brand" href="#top"><Mark /><span>METHANE <b>COPILOT</b></span></a><div className="top-right"><span className="system"><i className="live-dot" /> MARSS-2L v1 — live scan</span><span>LOCAL MODE <em /> NO API KEYS</span></div></header>
+      <section className="hero" id="top"><div className="hero-copy"><p className="eyebrow">Operational methane intelligence</p><h1>We don&apos;t just find methane leaks. <em>We watch until they&apos;re fixed.</em></h1><p className="hero-lede">A field-ready operating story for turning an invisible loss into a named source, a defensible bill, a verified repair, and a modeled credit pathway.</p><div className="loop"><b>DETECT</b><i>↗</i><span>BILL</span><i>↗</i><span>HEAL</span><i>↗</i><span>CREDIT</span></div></div><div className="orbit" aria-hidden="true"><div /><div /><strong><Mark /> CH4<small>signal</small><small>action</small><small>proof</small></strong></div></section>
+      <nav className="tabs" aria-label="Case views" role="tablist">{tabs.map((tab, index) => <button key={tab.id} role="tab" aria-selected={active === tab.id} aria-controls={`${tab.id}-panel`} className={active === tab.id ? "selected" : ""} onClick={() => setActive(tab.id)}><small>{index + 1}</small><Icon kind={tab.id} /><span><b>{tab.label}</b><em>{tab.text}</em></span><i>↘</i></button>)}</nav>
+      <div className="content-heading"><div><p className="eyebrow">{current.kicker} — {tabs.findIndex((tab) => tab.id === active) + 1} / {tabs.length}</p><h2>{current.text}</h2></div><p>All visuals are local geometry<br />and embedded case data.</p></div>
+      <div id={`${active}-panel`} role="tabpanel" tabIndex={0}>{active === "source" && <Source />}{active === "bill" && <Bill />}{active === "heal" && <Heal />}{active === "credit" && <Credit />}</div>
+      <footer><span><Mark /> Methane Copilot</span><span>DETECT ↗ BILL ↗ HEAL ↗ CREDIT</span><span>Local mode ↗ v1.0</span></footer>
     </main>
   );
 }
