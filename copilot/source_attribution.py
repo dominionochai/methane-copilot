@@ -1,206 +1,243 @@
-"""Wind-aware, first-order attribution of a methane plume to an upwind source.
-
-This is a screening decision layer above MARS-S2L, not a dispersion model or
-regulatory attribution.  ERA5/CDS is optional; local CSV or JSON wind records
-are supported with a documented zero-wind fallback.
-"""
+"""Validated, first-order wind-aware methane source screening."""
 from __future__ import annotations
 
 import argparse
 import csv
 import json
+import logging
 import math
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+LOGGER = logging.getLogger(__name__)
 EARTH_RADIUS_M = 6_371_000.0
-UNCERTAINTY_DISCLAIMER = ("Screening attribution only: wind interpolation, plume travel time, "
-    "terrain, atmospheric stability, source multiplicity, and geolocation error are simplified. "
-    "Confirm any facility attribution with local data and a suitable dispersion/field investigation.")
+UNCERTAINTY_DISCLAIMER = "Heuristic screening only; confirm any facility attribution with local data, a suitable dispersion model, and field investigation."
+
+
+def _coord(value: Any, name: str, low: float, high: float) -> float:
+    result = float(value)
+    if not math.isfinite(result) or not low <= result <= high:
+        raise ValueError(f"{name} must be finite and between {low} and {high}")
+    return result
+
+
+def _wind(value: Any, name: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
+
+
+def _time(value: Any) -> datetime:
+    result = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
+    return result.astimezone(timezone.utc)
+
 
 @dataclass(frozen=True)
 class WindRecord:
-    """A georeferenced wind observation; U is eastward and V is northward."""
     timestamp: datetime
     latitude: float
     longitude: float
     u_m_s: float
     v_m_s: float
 
-def _time(value: Any) -> datetime:
-    """Parse an ISO timestamp and normalize it to UTC."""
-    result = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return (result if result.tzinfo else result.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "timestamp", _time(self.timestamp))
+        object.__setattr__(self, "latitude", _coord(self.latitude, "latitude", -90, 90))
+        object.__setattr__(self, "longitude", _coord(self.longitude, "longitude", -180, 180))
+        object.__setattr__(self, "u_m_s", _wind(self.u_m_s, "u_m_s"))
+        object.__setattr__(self, "v_m_s", _wind(self.v_m_s, "v_m_s"))
 
-def _record(value: Mapping[str, Any]) -> WindRecord:
-    """Normalize common CSV/JSON field aliases into a WindRecord."""
+
+def _record(row: Mapping[str, Any]) -> WindRecord:
     def get(*names: str) -> Any:
         for name in names:
-            if name in value:
-                return value[name]
+            if name in row:
+                return row[name]
         return None
-    fields = (get("timestamp", "time", "datetime"), get("latitude", "lat"),
-              get("longitude", "lon", "lng"), get("u_m_s", "u10", "u"),
-              get("v_m_s", "v10", "v"))
-    if any(item is None for item in fields):
-        raise ValueError("wind records need timestamp, latitude, longitude, u and v")
-    return WindRecord(_time(fields[0]), float(fields[1]), float(fields[2]), float(fields[3]), float(fields[4]))
+    values = (get("timestamp", "time", "datetime"), get("latitude", "lat"), get("longitude", "lon", "lng"), get("u_m_s", "u10", "u"), get("v_m_s", "v10", "v"))
+    if any(value is None for value in values):
+        raise ValueError("wind records need timestamp, latitude, longitude, u, and v")
+    return WindRecord(*values)
+
 
 def load_wind_csv(path: str | os.PathLike[str]) -> list[WindRecord]:
-    """Load a CSV containing timestamp, latitude, longitude, u, and v columns."""
     with Path(path).open(newline="", encoding="utf-8") as handle:
         return [_record(row) for row in csv.DictReader(handle)]
 
+
 def load_wind_config(path: str | os.PathLike[str]) -> list[WindRecord]:
-    """Load a JSON list or an object containing a ``records`` list."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    data = data.get("records", []) if isinstance(data, Mapping) else data
-    if not isinstance(data, list):
+    records = data.get("records", []) if isinstance(data, Mapping) else data
+    if not isinstance(records, list):
         raise ValueError("wind config must be a JSON list or {records: [...]}")
-    return [_record(item) for item in data]
+    return [_record(row) for row in records]
+
 
 def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Return haversine distance in metres."""
+    lat1, lat2 = _coord(lat1, "lat1", -90, 90), _coord(lat2, "lat2", -90, 90)
+    lon1, lon2 = _coord(lon1, "lon1", -180, 180), _coord(lon2, "lon2", -180, 180)
     p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
+    delta_lon = math.radians((lon2 - lon1 + 180.0) % 360.0 - 180.0)
+    a = math.sin(math.radians(lat2 - lat1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(delta_lon / 2) ** 2
+    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(min(1.0, a)))
 
-def interpolate_wind(records: Iterable[WindRecord | Mapping[str, Any]], latitude: float,
-                     longitude: float, timestamp: str | datetime) -> dict[str, float]:
-    """Interpolate U/V with inverse distance in space and time.
 
-    Weights are ``1 / ((1 + distance_km) * (1 + time_delta_hours))``.  This is
-    intentionally transparent and stable for sparse local files; ERA5 records
-    use the same interpolation contract.
-    """
-    target = _time(timestamp)
+def interpolate_wind(records: Iterable[WindRecord | Mapping[str, Any]], latitude: float, longitude: float, timestamp: str | datetime) -> dict[str, float]:
+    """Inverse-distance/time interpolation with validated finite inputs."""
+    lat, lon, target = _coord(latitude, "latitude", -90, 90), _coord(longitude, "longitude", -180, 180), _time(timestamp)
     values = [item if isinstance(item, WindRecord) else _record(item) for item in records]
     if not values:
         raise ValueError("at least one wind record is required")
-    total = u = v = 0.0
+    total = total_u = total_v = 0.0
     for item in values:
-        distance_km = _distance_m(latitude, longitude, item.latitude, item.longitude) / 1000
-        hours = abs((item.timestamp - target).total_seconds()) / 3600
-        weight = 1 / ((1 + distance_km) * (1 + hours))
-        total += weight; u += weight * item.u_m_s; v += weight * item.v_m_s
-    u /= total; v /= total
+        distance_km = _distance_m(lat, lon, item.latitude, item.longitude) / 1000.0
+        hours = abs((item.timestamp - target).total_seconds()) / 3600.0
+        weight = 1.0 / ((1.0 + distance_km) * (1.0 + hours))
+        total += weight
+        total_u += weight * item.u_m_s
+        total_v += weight * item.v_m_s
+    u, v = total_u / total, total_v / total
     return {"u_m_s": u, "v_m_s": v, "speed_m_s": math.hypot(u, v), "record_count": float(len(values))}
 
-def fetch_era5_wind(plume: Mapping[str, Any]) -> tuple[list[WindRecord] | None, str]:
-    """Attempt CDS ERA5 when configured; otherwise return a clear fallback note.
 
-    A configured ``cdsapi`` client downloads one NetCDF point/time request.
-    ``xarray`` is optional for reading that response.  Any credential, network,
-    dependency, or response problem returns ``None`` so CSV/JSON fallback can run.
-    """
-    configured = bool(os.getenv("CDSAPI_KEY") or os.getenv("CDSAPI_URL") or Path("~/.cdsapirc").expanduser().exists())
-    if not configured:
-        return None, "ERA5 skipped: no CDS API credentials/configuration found"
+def fetch_era5_wind(plume: Mapping[str, Any]) -> tuple[list[WindRecord] | None, dict[str, str]]:
+    """Attempt CDS retrieval; return logged, structured CDS/NetCDF errors."""
+    if not (os.getenv("CDSAPI_KEY") or os.getenv("CDSAPI_URL") or Path("~/.cdsapirc").expanduser().exists()):
+        reason = {"code": "not_configured", "message": "ERA5 skipped: CDS API is not configured"}
+        LOGGER.info(reason["message"])
+        return None, reason
     try:
-        import cdsapi  # type: ignore[import-not-found]
+        import cdsapi
     except ImportError:
-        return None, "ERA5 unavailable: install optional cdsapi; using local fallback"
-    centroid = plume.get("centroid", plume.get("georeferenced_centroid"))
-    if not isinstance(centroid, Mapping):
-        return None, "ERA5 unavailable: plume centroid is not georeferenced"
-    lat, lon = float(centroid["latitude"]), float(centroid["longitude"])
-    observed = _time(plume["scene_timestamp"])
-    target = Path(tempfile.mkstemp(suffix=".nc")[1])
+        reason = {"code": "dependency_unavailable", "message": "ERA5 unavailable: optional cdsapi is not installed"}
+        LOGGER.warning(reason["message"])
+        return None, reason
+    centroid = plume.get("centroid") or plume.get("georeferenced_centroid")
+    try:
+        lat = _coord(centroid["latitude"], "latitude", -90, 90)
+        lon = _coord(centroid["longitude"], "longitude", -180, 180)
+        observed = _time(plume["scene_timestamp"])
+    except (KeyError, TypeError, ValueError) as exc:
+        reason = {"code": "invalid_plume", "message": f"ERA5 unavailable: {type(exc).__name__}"}
+        LOGGER.warning(reason["message"])
+        return None, reason
+    fd, filename = tempfile.mkstemp(suffix=".nc")
+    os.close(fd)
+    target = Path(filename)
     try:
         options: dict[str, Any] = {"quiet": True}
-        if os.getenv("CDSAPI_URL"): options["url"] = os.environ["CDSAPI_URL"]
-        if os.getenv("CDSAPI_KEY"): options["key"] = os.environ["CDSAPI_KEY"]
-        cdsapi.Client(**options).retrieve("reanalysis-era5-single-levels", {
-            "product_type": "reanalysis", "variable": ["10m_u_component_of_wind", "10m_v_component_of_wind"],
-            "year": f"{observed.year:04d}", "month": f"{observed.month:02d}", "day": f"{observed.day:02d}",
-            "time": [f"{observed.hour:02d}:00"], "area": [lat + .25, lon - .25, lat - .25, lon + .25], "format": "netcdf"
-        }, str(target))
-        try:
-            import xarray as xr  # type: ignore[import-not-found]
-        except ImportError:
-            return None, "ERA5 downloaded but xarray is unavailable; using local fallback"
+        if os.getenv("CDSAPI_URL"):
+            options["url"] = os.environ["CDSAPI_URL"]
+        if os.getenv("CDSAPI_KEY"):
+            options["key"] = os.environ["CDSAPI_KEY"]
+        cdsapi.Client(**options).retrieve("reanalysis-era5-single-levels", {"product_type": "reanalysis", "variable": ["10m_u_component_of_wind", "10m_v_component_of_wind"], "year": f"{observed.year:04d}", "month": f"{observed.month:02d}", "day": f"{observed.day:02d}", "time": [f"{observed.hour:02d}:00"], "area": [lat + .25, lon - .25, lat - .25, lon + .25], "format": "netcdf"}, str(target))
+        import xarray as xr
         with xr.open_dataset(target) as dataset:
             u_name, v_name = ("u10", "v10") if "u10" in dataset else ("10u", "10v")
-            u = dataset[u_name].sel(latitude=lat, longitude=lon, method="nearest")
-            v = dataset[v_name].sel(latitude=lat, longitude=lon, method="nearest")
-            time_dim = "time" if "time" in u.dims else "valid_time"
-            u_value = float(u.sel({time_dim: observed}, method="nearest").item())
-            v_value = float(v.sel({time_dim: observed}, method="nearest").item())
-        return [WindRecord(observed, lat, lon, u_value, v_value)], "ERA5 CDS"
-    except Exception as exc:
-        return None, f"ERA5 request failed ({type(exc).__name__}); using local fallback"
+            u = float(dataset[u_name].sel(latitude=lat, longitude=lon, method="nearest").sel(time=observed, method="nearest").item())
+            v = float(dataset[v_name].sel(latitude=lat, longitude=lon, method="nearest").sel(time=observed, method="nearest").item())
+        return [WindRecord(observed, lat, lon, u, v)], {"code": "cds_live", "message": "ERA5 wind retrieved"}
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        reason = {"code": "cds_or_netcdf_error", "message": f"ERA5 unavailable: {type(exc).__name__}"}
+        LOGGER.warning(reason["message"])
+        return None, reason
     finally:
         target.unlink(missing_ok=True)
 
-def propagate_backward(centroid: Mapping[str, Any], wind: Mapping[str, float], plume_length_m: float = 1000.0) -> dict[str, float]:
-    """Move the centroid backward along the wind vector by plume length.
 
-    The default 1 km distance is only a screening assumption when MARS-S2L
-    does not provide a georeferenced plume length.
-    """
-    lat, lon = float(centroid["latitude"]), float(centroid["longitude"])
-    u, v = float(wind["u_m_s"]), float(wind["v_m_s"]); speed = math.hypot(u, v)
-    distance = max(0.0, float(plume_length_m))
-    if speed == 0: return {"latitude": lat, "longitude": lon, "travel_distance_m": 0.0}
+def propagate_backward(centroid: Mapping[str, Any], wind: Mapping[str, Any], plume_length_m: float = 1000.0) -> dict[str, float]:
+    """Return an upwind point, wrapped longitude, and explicit travel_time_s."""
+    lat, lon = _coord(centroid["latitude"], "latitude", -90, 90), _coord(centroid["longitude"], "longitude", -180, 180)
+    if abs(lat) >= 89.999:
+        raise ValueError("polar coordinates are unstable for longitude propagation")
+    distance = float(plume_length_m)
+    if not math.isfinite(distance) or distance < 0:
+        raise ValueError("plume_length_m must be finite and non-negative")
+    u, v = _wind(wind["u_m_s"], "u_m_s"), _wind(wind["v_m_s"], "v_m_s")
+    speed = math.hypot(u, v)
+    if speed == 0 or distance == 0:
+        return {"latitude": lat, "longitude": lon, "travel_distance_m": 0.0, "travel_time_s": 0.0}
     east, north = -u / speed * distance, -v / speed * distance
-    return {"latitude": lat + math.degrees(north / EARTH_RADIUS_M),
-            "longitude": lon + math.degrees(east / (EARTH_RADIUS_M * math.cos(math.radians(lat)))),
-            "travel_distance_m": distance, "travel_time_s": distance / speed}
+    result_lat = lat + math.degrees(north / EARTH_RADIUS_M)
+    result_lon = (lon + math.degrees(east / (EARTH_RADIUS_M * math.cos(math.radians(lat))))) % 360.0
+    if result_lon > 180:
+        result_lon -= 360.0
+    return {"latitude": result_lat, "longitude": result_lon, "travel_distance_m": distance, "travel_time_s": distance / speed}
+
 
 def _nearest(location: Mapping[str, float], facilities: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any] | None, float | None]:
-    """Return nearest facility and distance in metres, ignoring incomplete rows."""
-    best, best_distance = None, None
+    best: Mapping[str, Any] | None = None
+    best_distance: float | None = None
     for facility in facilities:
-        lat = facility.get("latitude", facility.get("lat")); lon = facility.get("longitude", facility.get("lon"))
-        if lat is None or lon is None: continue
-        distance = _distance_m(location["latitude"], location["longitude"], float(lat), float(lon))
-        if best_distance is None or distance < best_distance: best, best_distance = facility, distance
+        try:
+            lat = facility.get("latitude", facility.get("lat"))
+            lon = facility.get("longitude", facility.get("lon"))
+            if lat is None or lon is None:
+                continue
+            distance = _distance_m(location["latitude"], location["longitude"], float(lat), float(lon))
+        except (TypeError, ValueError):
+            continue
+        if best_distance is None or distance < best_distance:
+            best, best_distance = facility, distance
     return best, best_distance
 
-def attribute_source(plume: Mapping[str, Any], facilities: Sequence[Mapping[str, Any]] | None = None,
-                     wind_records: Iterable[WindRecord | Mapping[str, Any]] | None = None,
-                     wind_csv: str | os.PathLike[str] | None = None,
-                     wind_config: str | os.PathLike[str] | None = None) -> dict[str, Any]:
-    """Return likely upwind source coordinates, facility, confidence, and caveat.
 
-    Required plume fields are ``scene_timestamp`` and a georeferenced
-    ``centroid`` (latitude/longitude); ``estimated_flux`` is passed through.
-    If no facility catalogue is supplied, no facility name is invented.
+def attribute_source(plume: Mapping[str, Any], facilities: Sequence[Mapping[str, Any]] | None = None, *, wind_records: Iterable[WindRecord | Mapping[str, Any]] | None = None, wind_csv: str | os.PathLike[str] | None = None, wind_config: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    """Return candidate coordinates and a heuristic score, never an unverified facility.
+
+    A catalogue-match score is clamp(.85*exp(-distance_m/5000), .05, .95).
+    Without a match the score is .20 with wind and .05 with zero-wind fallback.
     """
     centroid = plume.get("centroid", plume.get("georeferenced_centroid"))
     if not isinstance(centroid, Mapping) or "scene_timestamp" not in plume:
         raise ValueError("plume needs scene_timestamp and a georeferenced centroid")
-    note = ""
+    lat, lon = _coord(centroid["latitude"], "latitude", -90, 90), _coord(centroid["longitude"], "longitude", -180, 180)
     if wind_records is not None:
-        records = [x if isinstance(x, WindRecord) else _record(x) for x in wind_records]; note = "caller-supplied wind records"
+        records, note = [x if isinstance(x, WindRecord) else _record(x) for x in wind_records], {"code": "caller_records", "message": "caller-supplied wind records"}
+    elif wind_csv is not None:
+        records, note = load_wind_csv(wind_csv), {"code": "csv", "message": str(wind_csv)}
+    elif wind_config is not None:
+        records, note = load_wind_config(wind_config), {"code": "json", "message": str(wind_config)}
     else:
-        records, note = fetch_era5_wind(plume); records = records or []
-        if not records and wind_csv: records, note = load_wind_csv(wind_csv), f"CSV fallback: {wind_csv}"
-        if not records and wind_config: records, note = load_wind_config(wind_config), f"JSON fallback: {wind_config}"
+        records, note = fetch_era5_wind(plume)
+        records = records or []
     if records:
-        wind = interpolate_wind(records, float(centroid["latitude"]), float(centroid["longitude"]), plume["scene_timestamp"])
-        source = propagate_backward(centroid, wind, float(plume.get("plume_length_m", plume.get("mask_length_m", 1000))))
+        wind = interpolate_wind(records, lat, lon, plume["scene_timestamp"])
+        candidate = propagate_backward(centroid, wind, float(plume.get("plume_length_m", plume.get("mask_length_m", 1000.0))))
     else:
         wind = {"u_m_s": 0.0, "v_m_s": 0.0, "speed_m_s": 0.0, "record_count": 0.0}
-        source = {"latitude": float(centroid["latitude"]), "longitude": float(centroid["longitude"]), "travel_distance_m": 0.0}
-        note = note or "no ERA5 or local wind source; zero-wind fallback"
-    facility, distance = _nearest(source, facilities or [])
-    name = None if facility is None else str(facility.get("name", facility.get("id", "unnamed facility")))
-    confidence = (max(.05, min(.95, .85 * math.exp(-distance / 5000))) if distance is not None else (.20 if records else .05))
-    return {"likely_upwind_source_facility": name, "likely_source_coordinates": {"latitude": source["latitude"], "longitude": source["longitude"]},
-            "facility_distance_m": distance, "confidence": round(confidence, 3), "wind": wind, "wind_source": note,
-            "estimated_flux": plume.get("estimated_flux"), "uncertainty_disclaimer": UNCERTAINTY_DISCLAIMER}
+        candidate = {"latitude": lat, "longitude": lon, "travel_distance_m": 0.0, "travel_time_s": 0.0}
+    facility, distance = _nearest(candidate, facilities or [])
+    score = max(.05, min(.95, .85 * math.exp(-distance / 5000))) if distance is not None else (.20 if records else .05)
+    result: dict[str, Any] = {"candidate_source_coordinates": {"latitude": candidate["latitude"], "longitude": candidate["longitude"]}, "travel_distance_m": candidate["travel_distance_m"], "travel_time_s": candidate["travel_time_s"], "facility_distance_m": distance, "confidence_score": round(score, 3), "confidence_type": "heuristic_score", "wind": wind, "wind_source": note, "estimated_flux": plume.get("estimated_flux"), "uncertainty_disclaimer": UNCERTAINTY_DISCLAIMER}
+    if facility is not None:
+        result["matched_facility"] = dict(facility)
+    return result
 
-def main() -> None:
-    """Run the documented sample plume JSON demo."""
-    parser = argparse.ArgumentParser(description=__doc__); parser.add_argument("--plume-json"); parser.add_argument("--wind-csv"); args = parser.parse_args()
-    sample = {"centroid": {"latitude": 29.7604, "longitude": -95.3698}, "scene_timestamp": "2026-01-15T15:00:00Z", "estimated_flux": {"metric_tons_ch4_per_day": 2.4}, "plume_length_m": 1800}
-    plume = json.loads(Path(args.plume_json).read_text(encoding="utf-8")) if args.plume_json else sample
-    print(json.dumps(attribute_source(plume, wind_csv=args.wind_csv), indent=2))
 
-if __name__ == "__main__": main()
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plume-json", type=Path)
+    parser.add_argument("--wind-csv", type=Path)
+    parser.add_argument("--wind-config", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        sample = {"centroid": {"latitude": 29.7604, "longitude": -95.3698}, "scene_timestamp": "2026-01-15T15:00:00Z", "estimated_flux": {"metric_tons_ch4_per_day": 2.4}, "plume_length_m": 1800}
+        plume = json.loads(args.plume_json.read_text(encoding="utf-8")) if args.plume_json else sample
+        print(json.dumps(attribute_source(plume, wind_csv=args.wind_csv, wind_config=args.wind_config), indent=2))
+        return 0
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        print(f"source attribution error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
