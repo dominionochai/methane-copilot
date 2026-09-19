@@ -1,44 +1,59 @@
 # methane-copilot
 
-This repository contains the MARS-S2L research code and the small integration facade used by the Stitch frontend. The facade composes the existing `copilot/source_attribution.py`, `copilot/dollar_engine.py`, `copilot/heal_tracker.py`, and `copilot/credit_mint.py` modules; it does not replace their validation or disclaimers.
+This repository contains the MARS-S2L research code and the small integration facade used by the Stitch frontend. The facade composes the existing `copilot/source_attribution.py`, `copilot/dollar_engine.py`, `copilot/real_tracker.py`, and `copilot/credit_mint.py` modules; it does not replace their validation or disclaimers.
 
 ## Integration status and requirements
 
-* **Required for the local end-to-end flow:** Python 3.10+, the repository itself, and the existing test/runtime dependencies. `EIA_API_KEY` is optional for offline fallback but required for a live Henry Hub price.
+* **Required for the local end-to-end flow:** Python 3.12+ is required. The repository itself and the existing test/runtime dependencies are required. `EIA_API_KEY` is optional for offline fallback but required for a live Henry Hub price.
 * **Optional:** `EIA_API_KEY` (runtime-only; never commit, print, or log it), a local MARS plume JSON file, a facilities JSON file, and the optional ERA5/Copernicus source used by the lower-level attribution module.
 * Eye on Methane/MARS publishes data dictionaries and downloads, but no clean standalone public plume API endpoint was found in the public materials. The integration therefore supports a documented local JSON import path rather than inventing an endpoint: `COPILOT_PLUME_JSON=/absolute/path/plume.json`.
 
 ## Environment variables
 
 ```bash
-export EIA_API_KEY="<runtime-only EIA key>"       # optional; never commit or echo
+export EIA_API_KEY="<runtime-only EIA key>"        # optional; never commit or echo
 export COPILOT_PLUME_JSON="/absolute/path/plume.json" # optional local MARS-shaped JSON
 export COPILOT_FACILITIES_JSON="/absolute/path/facilities.json" # optional JSON array
-export COPILOT_CASE_DIR="/absolute/path/runtime-cases"   # optional, defaults to copilot/cases
+export COPILOT_CASE_DIR="/absolute/path/runtime-cases"    # optional, defaults to copilot/cases
 export COPILOT_CREDIT_DIR="/absolute/path/runtime-credits" # optional, defaults to copilot/credits
 ```
 
-The plume import accepts an object with `scene_timestamp`, `centroid.latitude`, `centroid.longitude`, and `estimated_flux.metric_tons_ch4_per_day`. Facilities are an array of objects with latitude/longitude and optional name/component.
+The plume import accepts an object with `scene_timestamp`, `centroid.latitude`, `centroid.longitude`, and `estimated_flux.metric_tonnes_ch4_per_day`. Facilities are an array of objects with latitude/longitude and optional name/component.
 
 ## Run tests and the sample flow
 
 ```bash
-python -m pip install -e .
+python -m pip install -e ".[test]"
 python -m pytest copilot/tests/test_api.py copilot/tests/test_credit_mint.py
 # Run the existing suite as well (may require the research dependencies):
 python -m pytest
-python -m copilot.api # existing module CLIs remain available; use the API facade from Python
 ```
 
-A deterministic in-process sample is:
+From the repository root, run the deterministic in-process sample:
 
-```python
+```text
+python - <<'PY'
 from copilot.api import run_flow
-result = run_flow({"case_dir": "/tmp/methane-cases", "credit_dir": "/tmp/methane-credits"})
+
+result = run_flow({
+    "case_dir": "/tmp/methane-cases",
+    "credit_dir": "/tmp/methane-credits",
+})
 print(result["data"]["credit"]["credit_count"])
+PY
 ```
 
-The flow is: local plume import (or built-in demo object) -> Open-Meteo current wind attribution -> nearest facility heuristic -> EIA Henry Hub/constant fallback and gas, CO2e, climate-damage and lost-gas dollars -> `detected -> source_named -> billed -> repair_scheduled -> resolved` case lifecycle -> locally minted modeled credit batch.
+The flow is: local plume import (or built-in demo object) -> Open-Meteo current wind attribution -> nearest facility heuristic -> EIA Henry Hub/constant fallback and gas, CO2e, climate-damage and lost-gas dollars -> `detected` -> `source_named` -> `billed` -> `repair_scheduled` -> `resolved` case lifecycle -> locally minted modeled credit batch.
+
+## Web demo
+
+See [`web/README.md`](web/README.md) for the web demo details. From the repository root, run:
+
+```bash
+cd web && npm install && npm run dev
+```
+
+Open `http://localhost:3000` in your browser. No API keys are needed.
 
 ## Response contract
 
